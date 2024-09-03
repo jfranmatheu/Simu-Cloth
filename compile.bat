@@ -7,16 +7,21 @@ set "SCRIPT_DIR=%~dp0"
 :: Change to the script directory
 cd /d "%SCRIPT_DIR%"
 
-:: Check if Python is installed and in PATH
-where python >nul 2>nul
-if %errorlevel% neq 0 (
-    echo Python is not found in your PATH. Please install Python and add it to your PATH.
+:: Use Python 3.11 specifically (adjust path as necessary)
+set PYTHON_PATH="C:\\Users\\JF\\AppData\\Local\\Programs\\Python\\Python311\\python.exe"
+
+:: Check if Python 3.11 is available
+if not exist "%PYTHON_PATH%" (
+    echo Python 3.11 not found at %PYTHON_PATH%. Please install it or adjust the path.
     pause
     exit /b 1
 )
 
+:: Ensure NumPy is installed
+"%PYTHON_PATH%" -m pip install numpy
+
 :: Run the setup.py script to compile the cloth_simulation module
-python setup.py build_ext
+"%PYTHON_PATH%" setup.py build_ext
 
 if %errorlevel% neq 0 (
     echo Compilation failed. Please check your mypyc installation and the cloth_simulation.py file.

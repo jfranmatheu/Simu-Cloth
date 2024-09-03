@@ -1,5 +1,6 @@
 import numpy as np
 from typing import List, Set, Tuple
+from time import time
 
 def update_positions(
     positions: np.ndarray,
@@ -9,6 +10,7 @@ def update_positions(
     dt: float,
     damping: float
 ) -> Tuple[np.ndarray, np.ndarray]:
+    ts = time()
     gravity = np.array([0.0, 0.0, -9.8])
     for i in range(len(positions)):
         if i not in pinned_vertices:
@@ -17,6 +19,8 @@ def update_positions(
             velocity *= (1.0 - damping)
             prev_positions[i] = positions[i].copy()
             positions[i] += velocity * dt
+    te = time()
+    print(f"[TIME-IT]: update_positions took: {te-ts} sec")
     return positions, prev_positions
 
 def solve_constraints(
@@ -26,6 +30,7 @@ def solve_constraints(
     stiffness: float,
     iterations: int
 ) -> np.ndarray:
+    ts = time()
     for _ in range(iterations):
         for v1, v2, rest_length in constraints:
             if v1 not in pinned_vertices or v2 not in pinned_vertices:
@@ -37,6 +42,8 @@ def solve_constraints(
                     positions[v1] += correction
                 if v2 not in pinned_vertices:
                     positions[v2] -= correction
+    te = time()
+    print(f"[TIME-IT]: solve_constraints took: {te-ts} sec")
     return positions
 
 def update_velocities(
@@ -46,9 +53,12 @@ def update_velocities(
     pinned_vertices: Set[int],
     dt: float
 ) -> np.ndarray:
+    ts = time()
     for i in range(len(positions)):
         if i not in pinned_vertices:
             velocities[i] = (positions[i] - prev_positions[i]) / dt
+    te = time()
+    print(f"[TIME-IT]: update_velocities took: {te-ts} sec")
     return velocities
 
 def apply_drag(
@@ -65,4 +75,6 @@ def apply_drag(
                 if distance < drag_radius:
                     influence = 1.0 - distance / drag_radius
                     positions[i] += (drag_position - positions[drag_index]) * influence
+    te = time()
+    print(f"[TIME-IT]: apply_drag took: {te-ts} sec")
     return positions

@@ -16,4 +16,5 @@ class SimpleClothPanel(bpy.types.Panel):
         layout.prop(props, "stiffness")
         layout.prop(props, "damping")
         layout.prop(props, "iterations")
+        layout.prop(props, "dt")
         layout.operator(SimpleClothOperator.bl_idname)

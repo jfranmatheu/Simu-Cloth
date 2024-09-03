@@ -4,7 +4,7 @@ schema_version = "1.0.0"
 # Change the values according to your extension
 id = "simucloth"
 version = "1.0.0"
-name = "Simu-Cloth"
+name = "Simucloth"
 tagline = "This is another extension"
 maintainer = "J. Fran Matheu"
 # Supported types: "add-on", "theme"

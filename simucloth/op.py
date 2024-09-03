@@ -1,11 +1,28 @@
+import os
+import sys
+import numpy as np
+
 import bpy
 import gpu
 from gpu_extras.batch import batch_for_shader
 from mathutils import Vector
-import numpy as np
 from bpy_extras import view3d_utils
-from . import cloth_simulation
+
 from .shaders import mesh_vertex_shader, mesh_fragment_shader
+from .utils.time_it import time_it
+
+# Add the directory containing the simucloth folder to Python's path
+addon_dir = os.path.dirname(os.path.abspath(__file__))
+if addon_dir not in sys.path:
+    sys.path.append(addon_dir)
+
+try:
+    from . import cloth_simulation
+    print("cloth_simulation imported successfully")
+except ImportError as e:
+    print("Failed to import cloth_simulation:", str(e))
+    import traceback
+    traceback.print_exc()
 
 
 class SimpleClothOperator(bpy.types.Operator):
@@ -32,6 +49,7 @@ class SimpleClothOperator(bpy.types.Operator):
         self.mesh_batch = None
         self.dragging = False
         self.drag_vertex_index = None
+        self._last_drag_update_pos = None
 
     def modal(self, context, event):
         if event.type == 'TIMER':
@@ -40,17 +58,24 @@ class SimpleClothOperator(bpy.types.Operator):
         elif event.type == 'LEFTMOUSE':
             if event.value == 'PRESS':
                 if self.start_drag(context, event):
+                    self._last_drag_update_pos = Vector((event.mouse_region_x, event.mouse_region_y))
                     return {'RUNNING_MODAL'}
             elif event.value == 'RELEASE':
                 self.end_drag()
+                self._last_drag_update_pos = None
                 return {'RUNNING_MODAL'}
         elif event.type == 'MOUSEMOVE':
-            self.update_drag(context, event)
+            if self.dragging:
+                current_pos = Vector((event.mouse_region_x, event.mouse_region_y))
+                if (current_pos - self._last_drag_update_pos).length >= 5:
+                    self.update_drag(context, event)
+                    self._last_drag_update_pos = current_pos
         elif event.type in {'ESC'}:
             self.cancel(context)
             return {'CANCELLED'}
         return {'PASS_THROUGH'}
-    
+
+    @time_it
     def start_drag(self, context, event):
         mouse_pos = Vector((event.mouse_region_x, event.mouse_region_y))
         ray_origin = np.array(view3d_utils.region_2d_to_origin_3d(context.region, context.region_data, mouse_pos))
@@ -115,6 +140,7 @@ class SimpleClothOperator(bpy.types.Operator):
 
         return None
 
+    @time_it
     def update_drag(self, context, event):
         if not self.dragging:
             return
@@ -149,7 +175,7 @@ class SimpleClothOperator(bpy.types.Operator):
             self.mesh = context.active_object.data
             self.initialize_simulation(context)
             wm = context.window_manager
-            self._timer = wm.event_timer_add(0.016, window=context.window)
+            self._timer = wm.event_timer_add(context.scene.simple_cloth.dt, window=context.window)
             wm.modal_handler_add(self)
             self._handler = bpy.types.SpaceView3D.draw_handler_add(self.draw_callback, (context,), 'WINDOW', 'POST_VIEW')
             return {'RUNNING_MODAL'}
@@ -163,6 +189,7 @@ class SimpleClothOperator(bpy.types.Operator):
         bpy.types.SpaceView3D.draw_handler_remove(self._handler, 'WINDOW')
         context.area.tag_redraw()
 
+    @time_it
     def initialize_simulation(self, context):
         props = context.scene.simple_cloth
         sim_ob = context.active_object
@@ -210,9 +237,10 @@ class SimpleClothOperator(bpy.types.Operator):
             rest_length = np.linalg.norm(self.positions[v1] - self.positions[v2])
             self.constraints.append((v1, v2, rest_length))
 
+    @time_it
     def update_simulation(self, context):
         props = context.scene.simple_cloth
-        dt = 0.016  # Fixed time step
+        dt = props.dt
 
         self.positions, self.prev_positions = cloth_simulation.update_positions(
             self.positions, self.prev_positions, self.velocities, 
@@ -238,6 +266,7 @@ class SimpleClothOperator(bpy.types.Operator):
 
         self.update_batches()
 
+    @time_it
     def update_batches(self):
         vertices = [Vector(p) for p in self.positions]
         
@@ -258,6 +287,7 @@ class SimpleClothOperator(bpy.types.Operator):
             "normal": normals
         }, indices=self.indices)
 
+    @time_it
     def draw_callback(self, context):
         # Draw points
         gpu.state.point_size_set(5)
