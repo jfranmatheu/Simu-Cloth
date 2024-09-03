@@ -1,5 +1,6 @@
 import bpy
-from .op import SimpleClothOperator
+from .ops.op_sim import SimpleClothOperator
+from .ops.op_wind import CreateWindObjectOperator
 
 
 class SimpleClothPanel(bpy.types.Panel):
@@ -17,4 +18,9 @@ class SimpleClothPanel(bpy.types.Panel):
         layout.prop(props, "damping")
         layout.prop(props, "iterations")
         layout.prop(props, "dt")
+        layout.label(text="Wind Force:")
+        layout.prop(props, "wind_force")
+        layout.prop(props, "wind_turbulence")
+        layout.prop(props, "wind_object")
+        layout.operator(CreateWindObjectOperator.bl_idname)
         layout.operator(SimpleClothOperator.bl_idname)

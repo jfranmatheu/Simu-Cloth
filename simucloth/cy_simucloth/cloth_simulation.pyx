@@ -10,14 +10,88 @@
 import numpy as np
 cimport numpy as cnp
 from cython.parallel import prange
-from libc.stdlib cimport malloc, free
-from libc.math cimport sqrt
+from libc.stdlib cimport malloc, free, rand, RAND_MAX
+from libc.math cimport sqrt, sin, cos, floor
 
 cnp.import_array()
 
 DTYPE = np.float64
 ctypedef cnp.float64_t DTYPE_t
 
+
+##############################################################################
+# PERLIN NOISE
+###########################################################################
+
+# Define constants for Perlin noise
+cdef int PERLIN_YWRAPB = 4
+cdef int PERLIN_YWRAP = 1 << PERLIN_YWRAPB
+cdef int PERLIN_ZWRAPB = 8
+cdef int PERLIN_ZWRAP = 1 << PERLIN_ZWRAPB
+cdef int PERLIN_SIZE = 4095
+
+cdef int* perlin
+
+# Initialize Perlin noise
+cdef void init_perlin():
+    global perlin
+    cdef int i
+    perlin = <int*>malloc(PERLIN_SIZE * sizeof(int))
+    for i in range(PERLIN_SIZE):
+        perlin[i] = <int>(rand() % 256)
+
+# Perlin noise function
+cdef DTYPE_t noise(DTYPE_t x, DTYPE_t y, DTYPE_t z) nogil:
+    cdef int X = <int>floor(x) & 255
+    cdef int Y = <int>floor(y) & 255
+    cdef int Z = <int>floor(z) & 255
+    x -= floor(x)
+    y -= floor(y)
+    z -= floor(z)
+    cdef DTYPE_t u = fade(x)
+    cdef DTYPE_t v = fade(y)
+    cdef DTYPE_t w = fade(z)
+    cdef int A = perlin[X] + Y
+    cdef int AA = perlin[A & 255] + Z
+    cdef int AB = perlin[(A + 1) & 255] + Z
+    cdef int B = perlin[(X + 1) & 255] + Y
+    cdef int BA = perlin[B & 255] + Z
+    cdef int BB = perlin[(B + 1) & 255] + Z
+    return lerp(w, lerp(v, lerp(u, grad(perlin[AA & 255], x, y, z),
+                                   grad(perlin[BA & 255], x - 1, y, z)),
+                           lerp(u, grad(perlin[AB & 255], x, y - 1, z),
+                                   grad(perlin[BB & 255], x - 1, y - 1, z))),
+                   lerp(v, lerp(u, grad(perlin[(AA + 1) & 255], x, y, z - 1),
+                                   grad(perlin[(BA + 1) & 255], x - 1, y, z - 1)),
+                           lerp(u, grad(perlin[(AB + 1) & 255], x, y - 1, z - 1),
+                                   grad(perlin[(BB + 1) & 255], x - 1, y - 1, z - 1))))
+
+cdef DTYPE_t fade(DTYPE_t t) nogil:
+    return t * t * t * (t * (t * 6 - 15) + 10)
+
+cdef DTYPE_t lerp(DTYPE_t t, DTYPE_t a, DTYPE_t b) nogil:
+    return a + t * (b - a)
+
+cdef DTYPE_t grad(int hash, DTYPE_t x, DTYPE_t y, DTYPE_t z) nogil:
+    cdef int h = hash & 15
+    cdef DTYPE_t u = x if h < 8 else y
+    cdef DTYPE_t v = y if h < 4 else (x if h == 12 or h == 14 else z)
+    return (u if (h & 1) == 0 else -u) + (v if (h & 2) == 0 else -v)
+
+# Don't forget to update these Python wrapper functions
+def init_perlin_py():
+    init_perlin()
+
+def free_perlin_py():
+    global perlin
+    if perlin != NULL:
+        free(perlin)
+        perlin = NULL
+
+
+##############################################################################
+# STRUCTS.
+##############################################################################
 
 cdef struct Triangle:
     Py_ssize_t i1, i2, i3
@@ -125,41 +199,29 @@ cdef void update_positions(
         double gravity_x = 0.0
         double gravity_y = 0.0
         double gravity_z = -9.8
-        double* velocities = <double*>malloc(pcount * 3 * sizeof(double))
         Particle* particle
     
-    if velocities == NULL:
-        with gil:
-            raise MemoryError("Failed to allocate memory for velocities")
-
     for i in prange(pcount, nogil=True):
         particle = &particles[i]
         if not particle.pinned:
-            velocities[i*3] = (particle.x - particle.prev_x) / dt
-            velocities[i*3 + 1] = (particle.y - particle.prev_y) / dt
-            velocities[i*3 + 2] = (particle.z - particle.prev_z) / dt
+            # Apply gravity and damping to velocity
+            particle.vx += gravity_x * dt
+            particle.vy += gravity_y * dt
+            particle.vz += gravity_z * dt
             
-            velocities[i*3] += gravity_x * dt
-            velocities[i*3 + 1] += gravity_y * dt
-            velocities[i*3 + 2] += gravity_z * dt
+            particle.vx *= (1.0 - damping)
+            particle.vy *= (1.0 - damping)
+            particle.vz *= (1.0 - damping)
             
-            velocities[i*3] *= (1.0 - damping)
-            velocities[i*3 + 1] *= (1.0 - damping)
-            velocities[i*3 + 2] *= (1.0 - damping)
-            
+            # Store current position as previous
             particle.prev_x = particle.x
             particle.prev_y = particle.y
             particle.prev_z = particle.z
             
-            particle.x += velocities[i*3] * dt
-            particle.y += velocities[i*3 + 1] * dt
-            particle.z += velocities[i*3 + 2] * dt
-
-            particle.vx = velocities[i*3]
-            particle.vy = velocities[i*3 + 1]
-            particles[i].vz = velocities[i*3 + 2]
-    
-    free(velocities)
+            # Update position using velocity
+            particle.x += particle.vx * dt
+            particle.y += particle.vy * dt
+            particle.z += particle.vz * dt
 
 def update_positions_py(size_t particles_ptr, Py_ssize_t pcount, double dt, double damping):
     update_positions(<Particle*>particles_ptr, pcount, dt, damping)
@@ -236,49 +298,10 @@ def update_velocities_py(size_t particles_ptr, Py_ssize_t pcount, DTYPE_t dt):
     update_velocities(<Particle*>particles_ptr, pcount, dt)
 
 
-cdef void apply_drag(
-    DragData* drag_data,
-    Particle* particles,
-    Py_ssize_t pcount
-) nogil:
-    if not drag_data.dragging:
-        return
-
-    cdef:
-        Py_ssize_t i
-        DTYPE_t dx, dy, dz, distance, influence
-        DTYPE_t move_x, move_y, move_z
-
-    move_x = drag_data.drag_current_x - drag_data.drag_start_x
-    move_y = drag_data.drag_current_y - drag_data.drag_start_y
-    move_z = drag_data.drag_current_z - drag_data.drag_start_z
-
-    for i in range(pcount):
-        dx = particles[i].x - drag_data.drag_start_x
-        dy = particles[i].y - drag_data.drag_start_y
-        dz = particles[i].z - drag_data.drag_start_z
-        distance = sqrt(dx*dx + dy*dy + dz*dz)
-        
-        if distance < drag_data.drag_influence_radius:
-            influence = 1.0 - distance / drag_data.drag_influence_radius
-            particles[i].x += move_x * influence
-            particles[i].y += move_y * influence
-            particles[i].z += move_z * influence
-
-    # Update the start position for the next frame
-    drag_data.drag_start_x = drag_data.drag_current_x
-    drag_data.drag_start_y = drag_data.drag_current_y
-    drag_data.drag_start_z = drag_data.drag_current_z
-
-def apply_drag_py(
-    size_t drag_data_ptr,
-    size_t particles_ptr,
-    Py_ssize_t pcount
-):
-    apply_drag(<DragData*>drag_data_ptr, <Particle*>particles_ptr, pcount)
-
-
+################################################################################
 # UTILTIES.
+################################################################################
+
 def get_positions_py(size_t particles_ptr, Py_ssize_t pcount):
     cdef:
         Particle* particles = <Particle*>particles_ptr
@@ -359,7 +382,9 @@ cdef bint ray_triangle_intersection(
     return False
 
 
+################################################################################
 # DRAGGING.
+################################################################################
 
 cdef struct DragData:
     bint dragging
@@ -538,3 +563,109 @@ cdef void end_drag(DragData* drag_data) nogil:
 
 def end_drag_py(size_t drag_data_ptr):
     end_drag(<DragData*>drag_data_ptr)
+
+
+cdef void apply_drag(
+    DragData* drag_data,
+    Particle* particles,
+    Py_ssize_t pcount
+) nogil:
+    if not drag_data.dragging:
+        return
+
+    cdef:
+        Py_ssize_t i
+        DTYPE_t dx, dy, dz, distance, influence
+        DTYPE_t move_x, move_y, move_z
+
+    move_x = drag_data.drag_current_x - drag_data.drag_start_x
+    move_y = drag_data.drag_current_y - drag_data.drag_start_y
+    move_z = drag_data.drag_current_z - drag_data.drag_start_z
+
+    for i in range(pcount):
+        dx = particles[i].x - drag_data.drag_start_x
+        dy = particles[i].y - drag_data.drag_start_y
+        dz = particles[i].z - drag_data.drag_start_z
+        distance = sqrt(dx*dx + dy*dy + dz*dz)
+        
+        if distance < drag_data.drag_influence_radius:
+            influence = 1.0 - distance / drag_data.drag_influence_radius
+            particles[i].x += move_x * influence
+            particles[i].y += move_y * influence
+            particles[i].z += move_z * influence
+
+    # Update the start position for the next frame
+    drag_data.drag_start_x = drag_data.drag_current_x
+    drag_data.drag_start_y = drag_data.drag_current_y
+    drag_data.drag_start_z = drag_data.drag_current_z
+
+def apply_drag_py(
+    size_t drag_data_ptr,
+    size_t particles_ptr,
+    Py_ssize_t pcount
+):
+    apply_drag(<DragData*>drag_data_ptr, <Particle*>particles_ptr, pcount)
+
+
+
+################################################################################
+# WIND FORCE.
+################################################################################
+
+cdef void apply_wind_force(
+    Particle* particles,
+    Py_ssize_t pcount,
+    DTYPE_t wind_force_x,
+    DTYPE_t wind_force_y,
+    DTYPE_t wind_force_z,
+    DTYPE_t turbulence,
+    DTYPE_t time,
+    DTYPE_t dt
+) nogil:
+    cdef:
+        Py_ssize_t i
+        DTYPE_t force_x, force_y, force_z
+        DTYPE_t noise_x, noise_y, noise_z
+        DTYPE_t scale = 0.1  # Scale factor for Perlin noise
+        DTYPE_t time_scale = 0.5  # Time scale for wind variation
+
+    for i in prange(pcount, nogil=True):
+        if not particles[i].pinned:
+            # Base wind force
+            force_x = wind_force_x
+            force_y = wind_force_y
+            force_z = wind_force_z
+
+            # Add Perlin noise-based turbulence
+            noise_x = noise(particles[i].x * scale, particles[i].y * scale, time * time_scale) * 2 - 1
+            noise_y = noise(particles[i].y * scale, particles[i].z * scale, time * time_scale) * 2 - 1
+            noise_z = noise(particles[i].z * scale, particles[i].x * scale, time * time_scale) * 2 - 1
+
+            force_x += noise_x * turbulence
+            force_y += noise_y * turbulence
+            force_z += noise_z * turbulence
+
+            # Apply force to velocity
+            particles[i].vx += force_x * dt
+            particles[i].vy += force_y * dt
+            particles[i].vz += force_z * dt
+
+# Update the Python wrapper
+def apply_wind_force_py(
+    size_t particles_ptr,
+    Py_ssize_t pcount,
+    cnp.ndarray[DTYPE_t, ndim=1] wind_force,
+    DTYPE_t turbulence,
+    DTYPE_t time,
+    DTYPE_t dt
+):
+    apply_wind_force(
+        <Particle*>particles_ptr,
+        pcount,
+        wind_force[0],
+        wind_force[1],
+        wind_force[2],
+        turbulence,
+        time,
+        dt
+    )

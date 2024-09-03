@@ -8,8 +8,9 @@ from gpu_extras.batch import batch_for_shader
 from mathutils import Vector
 from bpy_extras import view3d_utils
 
-from .shaders import mesh_vertex_shader, mesh_fragment_shader
-from .utils.time_it import time_it
+from ..shaders import mesh_vertex_shader, mesh_fragment_shader
+from ..utils.time_it import time_it
+from ..utils.object import get_local_axis_direction
 
 # Add the directory containing the simucloth folder to Python's path
 # addon_dir = os.path.dirname(os.path.abspath(__file__))
@@ -17,7 +18,7 @@ from .utils.time_it import time_it
 #     sys.path.append(addon_dir)
 
 try:
-    from .cy_simucloth.cloth_simulation import (
+    from ..cy_simucloth.cloth_simulation import (
         create_particles_py,
         create_constraints_py,
         free_particles_py,
@@ -34,7 +35,11 @@ try:
         update_drag_py,
         end_drag_py,
         create_triangles_py,
-        free_triangles_py
+        free_triangles_py,
+        apply_wind_force_py,
+        apply_wind_force_py,
+        init_perlin_py,
+        free_perlin_py,
     )
     print("cloth_simulation imported successfully")
 except ImportError as e:
@@ -66,6 +71,7 @@ class SimpleClothOperator(bpy.types.Operator):
         self._drag_influence_radius = 1.0  # Adjust this value as needed
         self.triangles_ptr = None
         self.tcount = 0
+        self.simulation_time = 0.0
 
     def __del__(self):
         if hasattr(self, 'particles_ptr') and self.particles_ptr is not None:
@@ -80,6 +86,7 @@ class SimpleClothOperator(bpy.types.Operator):
     def execute(self, context):
         if context.active_object and context.active_object.type == 'MESH':
             self.drag_data_ptr = create_drag_data_py(self._drag_influence_radius)
+            init_perlin_py()  # Initialize Perlin noise
             self.mesh = context.active_object.data
             self.initialize_simulation(context)
             wm = context.window_manager
@@ -176,6 +183,7 @@ class SimpleClothOperator(bpy.types.Operator):
         return None
 
     def cancel(self, context):
+        free_perlin_py()  # Clean up Perlin noise
         if hasattr(self, 'particles_ptr') and self.particles_ptr is not None:
             free_particles_py(self.particles_ptr)
             del self.particles_ptr
@@ -255,12 +263,28 @@ class SimpleClothOperator(bpy.types.Operator):
     def update_simulation(self, context):
         props = context.scene.simple_cloth
         dt = props.dt
+        self.simulation_time += dt  # Increment simulation time
+
+        wind_force = Vector((0, 0, 0))
+        if props.wind_object and props.wind_force > 0:
+            wind_direction = get_local_axis_direction(props.wind_object, 'Y')
+            wind_force = wind_direction * props.wind_force
+
+        wind_force_np = np.array([wind_force.x, wind_force.y, wind_force.z], dtype=np.float64)
+
+        apply_wind_force_py(
+            self.particles_ptr,
+            self.pcount,
+            wind_force_np,
+            props.wind_turbulence,
+            self.simulation_time,
+            dt
+        )
 
         update_positions_py(self.particles_ptr, self.pcount, dt, props.damping)
         solve_constraints_py(self.particles_ptr, self.constraints_ptr, self.pcount, self.ccount, props.stiffness, props.iterations)
         update_velocities_py(self.particles_ptr, self.pcount, dt)
 
-        # Apply drag using the new DragData structure
         apply_drag_py(self.drag_data_ptr, self.particles_ptr, self.pcount)
 
         self.update_batches()
