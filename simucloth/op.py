@@ -27,7 +27,14 @@ try:
         update_velocities_py,
         apply_drag_py,
         get_positions_py,
-        get_velocities_py
+        get_velocities_py,
+        create_drag_data_py,
+        free_drag_data_py,
+        start_drag_py,
+        update_drag_py,
+        end_drag_py,
+        create_triangles_py,
+        free_triangles_py
     )
     print("cloth_simulation imported successfully")
 except ImportError as e:
@@ -42,9 +49,6 @@ class SimpleClothOperator(bpy.types.Operator):
     
     _timer = None
     _handler = None
-    _drag_start = None
-    _drag_current = None
-    _drag_influence_radius = 1.0  # Adjust this to change the area of influence
 
     def __init__(self):
         self.mesh = None
@@ -58,14 +62,34 @@ class SimpleClothOperator(bpy.types.Operator):
         self.point_batch = None
         self.mesh_batch = None
         self.dragging = False
-        self.drag_vertex_index = None
-        self._last_drag_update_pos = None
+        self.drag_data_ptr = None
+        self._drag_influence_radius = 1.0  # Adjust this value as needed
+        self.triangles_ptr = None
+        self.tcount = 0
 
     def __del__(self):
         if hasattr(self, 'particles_ptr') and self.particles_ptr is not None:
             free_particles_py(self.particles_ptr)
         if hasattr(self, 'constraints_ptr') and self.constraints_ptr is not None:
             free_constraints_py(self.constraints_ptr)
+        if hasattr(self, 'drag_data_ptr') and self.drag_data_ptr is not None:
+            free_drag_data_py(self.drag_data_ptr)
+        if hasattr(self, 'triangles_ptr') and self.triangles_ptr is not None:
+            free_triangles_py(self.triangles_ptr)
+
+    def execute(self, context):
+        if context.active_object and context.active_object.type == 'MESH':
+            self.drag_data_ptr = create_drag_data_py(self._drag_influence_radius)
+            self.mesh = context.active_object.data
+            self.initialize_simulation(context)
+            wm = context.window_manager
+            self._timer = wm.event_timer_add(context.scene.simple_cloth.dt, window=context.window)
+            wm.modal_handler_add(self)
+            self._handler = bpy.types.SpaceView3D.draw_handler_add(self.draw_callback, (context,), 'WINDOW', 'POST_VIEW')
+            return {'RUNNING_MODAL'}
+        else:
+            self.report({'ERROR'}, "No active mesh object selected")
+            return {'CANCELLED'}
 
     def modal(self, context, event):
         if event.type == 'TIMER':
@@ -75,9 +99,11 @@ class SimpleClothOperator(bpy.types.Operator):
             if event.value == 'PRESS':
                 if self.start_drag(context, event):
                     self._last_drag_update_pos = Vector((event.mouse_region_x, event.mouse_region_y))
+                    self.dragging = True
                     return {'RUNNING_MODAL'}
             elif event.value == 'RELEASE':
                 self.end_drag()
+                self.dragging = False
                 self._last_drag_update_pos = None
                 return {'RUNNING_MODAL'}
         elif event.type == 'MOUSEMOVE':
@@ -97,35 +123,26 @@ class SimpleClothOperator(bpy.types.Operator):
         ray_origin = np.array(view3d_utils.region_2d_to_origin_3d(context.region, context.region_data, mouse_pos))
         ray_direction = np.array(view3d_utils.region_2d_to_vector_3d(context.region, context.region_data, mouse_pos))
 
-        closest_vertex = None
-        closest_distance = float('inf')
-        closest_point = None
+        return start_drag_py(self.drag_data_ptr, self.particles_ptr, self.pcount, self.triangles_ptr, self.tcount, ray_origin, ray_direction)
 
-        positions = get_positions_py(self.particles_ptr, self.pcount)
+    @time_it
+    def update_drag(self, context, event):
+        mouse_pos = Vector((event.mouse_region_x, event.mouse_region_y))
+        ray_origin = np.array(view3d_utils.region_2d_to_origin_3d(context.region, context.region_data, mouse_pos))
+        ray_direction = np.array(view3d_utils.region_2d_to_vector_3d(context.region, context.region_data, mouse_pos))
+        
+        # Project the ray onto a plane perpendicular to the view direction
+        plane_normal = ray_direction
+        plane_point = ray_origin + ray_direction  # Any point on the plane
 
-        for i1, i2, i3 in self.indices:
-            v1, v2, v3 = positions[i1], positions[i2], positions[i3]
+        # Calculate the intersection of the ray with the plane
+        t = np.dot(plane_point - ray_origin, plane_normal) / np.dot(ray_direction, plane_normal)
+        new_position = ray_origin + t * ray_direction
 
-            intersection = self.ray_triangle_intersection(ray_origin, ray_direction, v1, v2, v3)
-            if intersection is not None:
-                distance = np.linalg.norm(intersection - ray_origin)
-                if distance < closest_distance:
-                    closest_distance = distance
-                    closest_point = intersection
+        update_drag_py(self.drag_data_ptr, self.particles_ptr, self.pcount, new_position)
 
-                    # Find the closest vertex of the triangle
-                    distances = [np.linalg.norm(v - intersection) for v in (v1, v2, v3)]
-                    closest_vertex = [i1, i2, i3][np.argmin(distances)]
-
-        if closest_vertex is not None:
-            self.dragging = True
-            self.drag_vertex_index = closest_vertex
-            self._drag_start = Vector(positions[closest_vertex])
-            self._drag_current = self._drag_start.copy()
-            return True
-        else:
-            self.dragging = False
-            return False
+    def end_drag(self):
+        end_drag_py(self.drag_data_ptr)
 
     def ray_triangle_intersection(self, ray_origin, ray_direction, v0, v1, v2):
         epsilon = 1e-6
@@ -158,41 +175,6 @@ class SimpleClothOperator(bpy.types.Operator):
 
         return None
 
-    @time_it
-    def update_drag(self, context, event):
-        if not self.dragging:
-            return
-        mouse_pos = Vector((event.mouse_region_x, event.mouse_region_y))
-        ray_origin = np.array(view3d_utils.region_2d_to_origin_3d(context.region, context.region_data, mouse_pos))
-        ray_direction = np.array(view3d_utils.region_2d_to_vector_3d(context.region, context.region_data, mouse_pos))
-        
-        plane_normal = ray_direction
-        plane_point = np.array(self._drag_start)
-        
-        t = np.dot(plane_point - ray_origin, plane_normal) / np.dot(ray_direction, plane_normal)
-        self._drag_current = Vector(ray_origin + t * ray_direction)
-
-        apply_drag_py(self.particles_ptr, self.pcount, self.drag_vertex_index, np.array(self._drag_current), self._drag_influence_radius)
-
-    def end_drag(self):
-        self.dragging = False
-        self.drag_vertex_index = None
-        self._drag_start = None
-        self._drag_current = None
-
-    def execute(self, context):
-        if context.active_object and context.active_object.type == 'MESH':
-            self.mesh = context.active_object.data
-            self.initialize_simulation(context)
-            wm = context.window_manager
-            self._timer = wm.event_timer_add(context.scene.simple_cloth.dt, window=context.window)
-            wm.modal_handler_add(self)
-            self._handler = bpy.types.SpaceView3D.draw_handler_add(self.draw_callback, (context,), 'WINDOW', 'POST_VIEW')
-            return {'RUNNING_MODAL'}
-        else:
-            self.report({'ERROR'}, "No active mesh object selected")
-            return {'CANCELLED'}
-
     def cancel(self, context):
         if hasattr(self, 'particles_ptr') and self.particles_ptr is not None:
             free_particles_py(self.particles_ptr)
@@ -200,6 +182,9 @@ class SimpleClothOperator(bpy.types.Operator):
         if hasattr(self, 'constraints_ptr') and self.constraints_ptr is not None:
             free_constraints_py(self.constraints_ptr)
             del self.constraints_ptr
+        if hasattr(self, 'drag_data_ptr') and self.drag_data_ptr is not None:
+            free_drag_data_py(self.drag_data_ptr)
+            del self.drag_data_ptr
         wm = context.window_manager
         wm.event_timer_remove(self._timer)
         bpy.types.SpaceView3D.draw_handler_remove(self._handler, 'WINDOW')
@@ -248,20 +233,25 @@ class SimpleClothOperator(bpy.types.Operator):
         self.ccount = len(constraints)
 
         # Store mesh indices for triangle faces
-        self.indices = []
+        # Create triangles
+        triangles = []
         for poly in eval_mesh.polygons:
             if len(poly.vertices) == 3:
-                self.indices.append(tuple(poly.vertices))
+                triangles.append(tuple(poly.vertices))
             elif len(poly.vertices) == 4:
                 # Split quad into two triangles
-                self.indices.append((poly.vertices[0], poly.vertices[1], poly.vertices[2]))
-                self.indices.append((poly.vertices[2], poly.vertices[3], poly.vertices[0]))
+                triangles.append((poly.vertices[0], poly.vertices[1], poly.vertices[2]))
+                triangles.append((poly.vertices[2], poly.vertices[3], poly.vertices[0]))
+
+        self.triangles_ptr = create_triangles_py(triangles)
+        self.tcount = len(triangles)
+        self.indices = triangles
 
         # If the mesh is not triangulated, you might want to add a warning or triangulate it
         if any(len(poly.vertices) > 4 for poly in eval_mesh.polygons):
             self.report({'WARNING'}, "Mesh contains n-gons (polygons with more than 4 vertices). These will be skipped.")
 
-    @time_it
+    # @time_it
     def update_simulation(self, context):
         props = context.scene.simple_cloth
         dt = props.dt
@@ -270,12 +260,12 @@ class SimpleClothOperator(bpy.types.Operator):
         solve_constraints_py(self.particles_ptr, self.constraints_ptr, self.pcount, self.ccount, props.stiffness, props.iterations)
         update_velocities_py(self.particles_ptr, self.pcount, dt)
 
-        if self.dragging:
-            apply_drag_py(self.particles_ptr, self.pcount, self.drag_vertex_index, np.array(self._drag_current), self._drag_influence_radius)
+        # Apply drag using the new DragData structure
+        apply_drag_py(self.drag_data_ptr, self.particles_ptr, self.pcount)
 
         self.update_batches()
 
-    @time_it
+    # @time_it
     def update_batches(self):
         positions = get_positions_py(self.particles_ptr, self.pcount)
         vertices = [Vector(p) for p in positions]
@@ -297,7 +287,7 @@ class SimpleClothOperator(bpy.types.Operator):
             "normal": normals
         }, indices=self.indices)
 
-    @time_it
+    # @time_it
     def draw_callback(self, context):
         # Draw points
         # gpu.state.point_size_set(5)
