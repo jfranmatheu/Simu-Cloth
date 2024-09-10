@@ -105,7 +105,7 @@ class SimulationObject(ctypes.Structure):
                 ("location", Vector3),
                 ("rotation", Vector3),
                 ("scale", Vector3),
-                ("matrix_world", ctypes.c_float  * 16),
+                ("matrix_world", (ctypes.c_float  * 4) * 4),
                 ("bbox_min", Vector3),
                 ("bbox_max", Vector3)]
 
@@ -131,7 +131,7 @@ class SimulationObject(ctypes.Structure):
         obj.location = Vector3(*location)
         obj.rotation = Vector3(*rotation)
         obj.scale = Vector3(*scale)
-        obj.matrix_world = (ctypes.c_float * 16)(*[v for row in matrix_world for v in row])  # ((ctypes.c_float * 4) * 4)(*[tuple(row) for row in matrix_world])
+        obj.matrix_world = ((ctypes.c_float * 4) * 4)(*[tuple(row) for row in matrix_world])
         obj.bbox_min = Vector3(*bbox_min)
         obj.bbox_max = Vector3(*bbox_max)
         return obj
@@ -186,7 +186,7 @@ class SimulationObject(ctypes.Structure):
             location=tuple(eval_obj.location),
             rotation=tuple(eval_obj.rotation_euler),
             scale=tuple(eval_obj.scale),
-            matrix_world=list(eval_obj.matrix_world),
+            matrix_world=list(eval_obj.matrix_world.row),
             bbox_min=tuple(eval_obj.bound_box[0]),
             bbox_max=tuple(eval_obj.bound_box[6])
         )

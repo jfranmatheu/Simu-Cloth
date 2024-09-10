@@ -1656,7 +1656,7 @@ struct __pyx_t_9simucloth_12cy_simucloth_5types_SimulationObject {
   struct __pyx_t_9simucloth_12cy_simucloth_5types_Vector3 location;
   struct __pyx_t_9simucloth_12cy_simucloth_5types_Vector3 rotation;
   struct __pyx_t_9simucloth_12cy_simucloth_5types_Vector3 scale;
-  float matrix_world[16];
+  float matrix_world[4][4];
   struct __pyx_t_9simucloth_12cy_simucloth_5types_Vector3 bbox_min;
   struct __pyx_t_9simucloth_12cy_simucloth_5types_Vector3 bbox_max;
 };

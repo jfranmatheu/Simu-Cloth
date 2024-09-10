@@ -63,6 +63,6 @@ cdef struct SimulationObject:
     Vector3 location
     Vector3 rotation
     Vector3 scale
-    float[16] matrix_world
+    float[4][4] matrix_world
     Vector3 bbox_min
     Vector3 bbox_max
