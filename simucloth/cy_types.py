@@ -147,11 +147,6 @@ class SimulationObject(ctypes.Structure):
         # Create particles
         verts = np.empty(shape=(len(eval_mesh.vertices) * 3), dtype=np.float32)
         eval_mesh.attributes['position'].data.foreach_get('vector', verts)
-
-        # Check for invalid vertex positions
-        if np.isnan(verts).any() or np.isinf(verts).any():
-            raise ValueError("Invalid vertex positions detected in the input mesh")
-
         verts = verts.reshape(-1, 3)
 
         particles = []
