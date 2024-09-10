@@ -22,7 +22,7 @@ from ..utils.object import (
     get_matrix_world_ptr,
     get_min_max_bound_box
 )
-from ..cy_types import SimulationObject
+from ..cy_types import SimulationObject, ObjectType
 
 
 # Add the directory containing the simucloth folder to Python's path
@@ -155,18 +155,26 @@ class SimpleClothOperator(bpy.types.Operator):
 
     def prepare_objects(self, context):
         USE_EVAL = False
+        OBJECT_TYPE = ObjectType.CLOTH.value
 
-        self.simulation_objects = []
+        self.simulation_objects = {}
+        self.mesh_draw_data = {}
         depsgraph = context.evaluated_depsgraph_get()
         for ob in context.scene.collection.children['SimuCloth-Cloths'].all_objects:
             if ob.type != 'MESH':
                 continue
+            IS_CLOTH = OBJECT_TYPE == ObjectType.CLOTH.value
             eval_ob = ob.evaluated_get(depsgraph) if USE_EVAL else ob
-            sim_obj = SimulationObject.from_object(eval_ob)
-            sim_obj.type = 1
-            self.simulation_objects.append(sim_obj)
+            if IS_CLOTH:
+                sim_obj, mesh_draw_data = SimulationObject.from_object(eval_ob, return_mesh_draw_data=True)
+                self.mesh_draw_data[ob['simucloth_ob_id']] = mesh_draw_data
+            else:
+                sim_obj = SimulationObject.from_object(eval_ob)
+            sim_obj.type = OBJECT_TYPE
+
+            self.simulation_objects[ob['simucloth_ob_id']] = sim_obj
         
-        for obj in self.simulation_objects:
+        for obj in self.simulation_objects.values():
             print(f"SimulationObject: type={obj.type}, tot_particles={obj.tot_particles}, tot_constraints={obj.tot_constraints}")
             # Print a few particle positions for verification
             # for i in range(min(5, obj.tot_particles)):
@@ -178,7 +186,7 @@ class SimpleClothOperator(bpy.types.Operator):
 
 
         # Pass the simulation objects to the Cython functions
-        create_simulation_objects_py(self.simulation_objects)
+        create_simulation_objects_py(list(self.simulation_objects.values()))
 
     # @time_it
     def initialize_simulation(self, context: bpy.types.Context):
@@ -250,17 +258,23 @@ class SimpleClothOperator(bpy.types.Operator):
     # @time_it
     def update_batches(self):
         self.point_batches = []
-        for i in range(len(self.simulation_objects)):
+        self.mesh_batches = []
+
+        index = 0
+        for ob_id in self.simulation_objects.keys():
             try:
-                positions = get_positions_py(i)
+                positions = get_positions_py(index)
                 if positions.size > 0:
+                    if mesh_draw_data := self.mesh_draw_data.get(ob_id):
+                        mesh_draw_data['vert_positions'] = positions
                     print(f"Info: GPUBatch created. Numpy size: {positions.size}. Numpy shape: {positions.shape}")
                     # print(f"POSITIONS at time {self.simulation_time}: ", positions)
                     self.point_batches.append(batch_for_shader(self.point_shader, 'POINTS', {"pos": positions}))
                 else:
-                    print(f"Warning: No positions returned for object {i}")
+                    print(f"Warning: No positions returned for object {ob_id}")
             except Exception as e:
-                print(f"Error getting positions for object {i}: {str(e)}")
+                print(f"Error getting positions for object {ob_id}: {str(e)}")
+            index += 1
 
         '''# Calculate normals
         normals = [Vector() for _ in vertices]
@@ -271,12 +285,15 @@ class SimpleClothOperator(bpy.types.Operator):
             normals[i2] += normal
             normals[i3] += normal
         
-        normals = [n.normalized() for n in normals]
+        normals = [n.normalized() for n in normals]'''
 
-        self.mesh_batches = batch_for_shader(self.mesh_shader, 'TRIS', {
-            "position": vertices,
-            "normal": normals
-        }, indices=self.indices)'''
+        for ob_id in self.simulation_objects.keys():
+            if mesh_draw_data := self.mesh_draw_data.get(ob_id):
+                batch = batch_for_shader(self.mesh_shader, 'TRIS', {
+                    "position": mesh_draw_data['vert_positions'],
+                    "normal": mesh_draw_data['vert_normals']
+                }, indices=mesh_draw_data['tri_indices'])
+                self.mesh_batches.append(batch)
 
     # @time_it
     def draw_callback(self, context):
@@ -295,13 +312,12 @@ class SimpleClothOperator(bpy.types.Operator):
             self.point_shader.uniform_float("color", color)
             batch.draw(self.point_shader)
 
-        '''# Draw mesh
+        # Draw mesh
         gpu.state.depth_test_set('LESS')
         gpu.state.depth_mask_set(True)
         # Remove face culling to render both sides
         # gpu.state.face_culling_set('BACK')
-        self.mesh_shader.bind()
-        
+
         model_view_matrix = context.region_data.view_matrix
         projection_matrix = context.region_data.window_matrix
         view_position = context.region_data.view_matrix.inverted().translation
@@ -310,13 +326,21 @@ class SimpleClothOperator(bpy.types.Operator):
         self.mesh_shader.uniform_float("projectionMatrix", projection_matrix)
         self.mesh_shader.uniform_float("lightDirection", (1, 1, 1))
         self.mesh_shader.uniform_float("viewPosition", view_position)
-        self.mesh_shader.uniform_float("color", (0.2, 0.4, 0.8))  # Adjust color as needed
         self.mesh_shader.uniform_float("shininess", 32.0)
         self.mesh_shader.uniform_float("fresnelBias", 0.1)
         self.mesh_shader.uniform_float("fresnelScale", 1.0)
         self.mesh_shader.uniform_float("fresnelPower", 2.0)
-        
-        self.mesh_batches.draw(self.mesh_shader)'''
+
+        batch_count = len(self.mesh_batches)
+        for batch_index, batch in enumerate(self.mesh_batches):
+            color = (
+                1 - batch_index / batch_count,
+                batch_index / batch_count,
+                1,
+                1
+            )
+            self.mesh_shader.uniform_float("color", color)  # Adjust color as needed
+            batch.draw(self.mesh_shader)
 
         gpu.state.depth_test_set('NONE')
         gpu.state.depth_mask_set(False)

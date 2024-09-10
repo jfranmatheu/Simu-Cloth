@@ -15,10 +15,10 @@ class AddClothOperator(bpy.types.Operator):
 
         for obj in context.selected_objects:
             if obj.type == 'MESH':
-                if 'simucloth_ob_uid' in obj:
+                if 'simucloth_ob_id' in obj:
                     continue
                 
-                obj['simucloth_ob_uid'] = str(uuid.uuid4().hex)
+                obj['simucloth_ob_id'] = str(uuid.uuid4().hex)
                 
                 # Add 'PINNED' vertedx group.
                 obj.vertex_groups.new(name='PINNED')

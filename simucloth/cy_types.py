@@ -96,7 +96,8 @@ class Mesh(ctypes.Structure):
 
 
 class SimulationObject(ctypes.Structure):
-    _fields_ = [("type", ctypes.c_int),
+    _fields_ = [# ("id", ctypes.c_wchar * 32),
+                ("type", ctypes.c_int),
                 ("mesh", Mesh),
                 ("particles", ctypes.POINTER(Particle)),
                 ("constraints", ctypes.POINTER(Constraint)),
@@ -111,6 +112,7 @@ class SimulationObject(ctypes.Structure):
 
     @classmethod
     def from_python(cls,
+                    id: str,
                     type: ObjectType,
                     mesh: Mesh,
                     particles: List[Particle],
@@ -122,6 +124,7 @@ class SimulationObject(ctypes.Structure):
                     bbox_min: Tuple[float, float, float],
                     bbox_max: Tuple[float, float, float]) -> 'SimulationObject':
         obj = cls()
+        # obj.id = id[:32].encode('utf-16')  # Truncate to 32 characters and encode as UTF-16
         obj.type = ctypes.c_int(type.value)
         obj.mesh = mesh
         obj.tot_particles = ctypes.c_int(len(particles))
@@ -137,7 +140,7 @@ class SimulationObject(ctypes.Structure):
         return obj
 
     @classmethod
-    def from_object(cls, eval_obj: bpy.types.Object) -> 'SimulationObject':
+    def from_object(cls, eval_obj: bpy.types.Object, return_mesh_draw_data: bool = False) -> 'SimulationObject':
         # Get the evaluated mesh data
         eval_mesh: bpy.types.Mesh = eval_obj.data
 
@@ -169,16 +172,25 @@ class SimulationObject(ctypes.Structure):
             print(f"Constraint {i}: v1={constraint.v1}, v2={constraint.v2}, rest_length={constraint.rest_length}")
 
         # Create mesh
-        # triangles = []
-        # for poly in eval_mesh.polygons:
-        #     if len(poly.vertices) == 3:
-        #         triangles.append(Triangle(*poly.vertices))
-        #     elif len(poly.vertices) == 4:
-        #         triangles.append(Triangle(poly.vertices[0], poly.vertices[1], poly.vertices[2]))
-        #         triangles.append(Triangle(poly.vertices[2], poly.vertices[3], poly.vertices[0]))
+        if return_mesh_draw_data:
+            eval_mesh.calc_loop_triangles()
+            triangles = np.empty(shape=(len(eval_mesh.loop_triangles) * 3), dtype=np.int32)
+            eval_mesh.loop_triangles.foreach_get('vertices', triangles)
+            triangles.reshape(-1, 3)
+            normals = np.empty(shape=(len(eval_mesh.vertices) * 3), dtype=np.float32)
+            eval_mesh.vertex_normals.foreach_get('vector', normals)
+            normals = normals.reshape(-1, 3)
+            mesh_draw_data = {
+                'tri_indices': triangles,
+                'vert_positions': verts,
+                'vert_normals': normals
+            }
+        else:
+            del verts
 
         # Create SimulationObject
         sim_obj = cls.from_python(
+            id=eval_obj['simucloth_ob_id'],
             type=ObjectType.CLOTH,
             mesh=Mesh.from_mesh(eval_mesh),
             particles=particles,
@@ -190,6 +202,9 @@ class SimulationObject(ctypes.Structure):
             bbox_min=tuple(eval_obj.bound_box[0]),
             bbox_max=tuple(eval_obj.bound_box[6])
         )
+        
+        if return_mesh_draw_data:
+            return sim_obj, mesh_draw_data
 
         return sim_obj
 
