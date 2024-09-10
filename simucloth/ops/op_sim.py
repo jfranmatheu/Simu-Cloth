@@ -1,6 +1,7 @@
 import os
 import sys
 import numpy as np
+import ctypes
 
 import bpy
 import gpu
@@ -10,7 +11,18 @@ from bpy_extras import view3d_utils
 
 from ..shaders import mesh_vertex_shader, mesh_fragment_shader
 from ..utils.time_it import time_it
-from ..utils.object import get_local_axis_direction
+from ..utils.object import (
+    get_local_axis_direction,
+    get_matrix_world_ptr,
+    get_mesh_corner_vert_ptr,
+    get_mesh_loop_triangles_ptr,
+    get_mesh_polygon_normals_ptr,
+    get_mesh_vert_positions_ptr,
+    get_mesh_vert_normals_ptr,
+    get_matrix_world_ptr,
+    get_min_max_bound_box
+)
+
 
 # Add the directory containing the simucloth folder to Python's path
 # addon_dir = os.path.dirname(os.path.abspath(__file__))
@@ -19,28 +31,15 @@ from ..utils.object import get_local_axis_direction
 
 try:
     from ..cy_simucloth.cloth_simulation import (
-        create_particles_py,
-        create_constraints_py,
-        free_particles_py,
-        free_constraints_py,
+        create_simulation_objects_py,
+        update_simulation_object_py,
+        free_simulation_objects_py,
+        get_positions_py,
         update_positions_py,
         solve_constraints_py,
         update_velocities_py,
-        apply_drag_py,
-        get_positions_py,
-        get_velocities_py,
-        create_drag_data_py,
-        free_drag_data_py,
-        start_drag_py,
-        update_drag_py,
-        end_drag_py,
-        create_triangles_py,
-        free_triangles_py,
-        apply_wind_force_py,
-        apply_wind_force_py,
-        init_perlin_py,
-        free_perlin_py,
     )
+    from ..cy_types import SimulationObject
     print("cloth_simulation imported successfully")
 except ImportError as e:
     print("Failed to import cloth_simulation:", str(e))
@@ -56,74 +55,58 @@ class SimpleClothOperator(bpy.types.Operator):
     _handler = None
 
     def __init__(self):
-        self.mesh = None
-        self.particles_ptr = None
-        self.constraints_ptr = None
-        self.pcount = 0
-        self.ccount = 0
-        self.pinned_vertices = None
         self.point_shader = gpu.shader.from_builtin('UNIFORM_COLOR')
         self.mesh_shader = gpu.types.GPUShader(mesh_vertex_shader, mesh_fragment_shader)
-        self.point_batch = None
-        self.mesh_batch = None
+        self.point_batches = []
+        self.mesh_batches = []
         self.dragging = False
         self.drag_data_ptr = None
         self._drag_influence_radius = 1.0  # Adjust this value as needed
-        self.triangles_ptr = None
-        self.tcount = 0
         self.simulation_time = 0.0
 
     def __del__(self):
-        if hasattr(self, 'particles_ptr') and self.particles_ptr is not None:
-            free_particles_py(self.particles_ptr)
-        if hasattr(self, 'constraints_ptr') and self.constraints_ptr is not None:
-            free_constraints_py(self.constraints_ptr)
-        if hasattr(self, 'drag_data_ptr') and self.drag_data_ptr is not None:
-            free_drag_data_py(self.drag_data_ptr)
-        if hasattr(self, 'triangles_ptr') and self.triangles_ptr is not None:
-            free_triangles_py(self.triangles_ptr)
+        # if hasattr(self, 'drag_data_ptr') and self.drag_data_ptr is not None:
+        #     free_drag_data_py(self.drag_data_ptr)
+        pass
 
     def execute(self, context):
-        if context.active_object and context.active_object.type == 'MESH':
-            self.drag_data_ptr = create_drag_data_py(self._drag_influence_radius)
-            init_perlin_py()  # Initialize Perlin noise
-            self.mesh = context.active_object.data
-            self.initialize_simulation(context)
-            wm = context.window_manager
-            self._timer = wm.event_timer_add(context.scene.simple_cloth.dt, window=context.window)
-            wm.modal_handler_add(self)
-            self._handler = bpy.types.SpaceView3D.draw_handler_add(self.draw_callback, (context,), 'WINDOW', 'POST_VIEW')
-            return {'RUNNING_MODAL'}
-        else:
-            self.report({'ERROR'}, "No active mesh object selected")
-            return {'CANCELLED'}
+        # self.drag_data_ptr = create_drag_data_py(self._drag_influence_radius)
+        # init_perlin_py()  # Initialize Perlin noise
+        self.initialize_simulation(context)
+        wm = context.window_manager
+        self._timer = wm.event_timer_add(context.scene.simple_cloth.dt, window=context.window)
+        wm.modal_handler_add(self)
+        self._handler = bpy.types.SpaceView3D.draw_handler_add(self.draw_callback, (context,), 'WINDOW', 'POST_VIEW')
+        context.area.tag_redraw()
+        return {'RUNNING_MODAL'}
 
     def modal(self, context, event):
         if event.type == 'TIMER':
             self.update_simulation(context)
             context.area.tag_redraw()
-        elif event.type == 'LEFTMOUSE':
-            if event.value == 'PRESS':
-                if self.start_drag(context, event):
-                    self._last_drag_update_pos = Vector((event.mouse_region_x, event.mouse_region_y))
-                    self.dragging = True
-                    return {'RUNNING_MODAL'}
-            elif event.value == 'RELEASE':
-                self.end_drag()
-                self.dragging = False
-                self._last_drag_update_pos = None
-                return {'RUNNING_MODAL'}
-        elif event.type == 'MOUSEMOVE':
-            if self.dragging:
-                current_pos = Vector((event.mouse_region_x, event.mouse_region_y))
-                if (current_pos - self._last_drag_update_pos).length >= 5:
-                    self.update_drag(context, event)
-                    self._last_drag_update_pos = current_pos
+        # elif event.type == 'LEFTMOUSE':
+        #     if event.value == 'PRESS':
+        #         if self.start_drag(context, event):
+        #             self._last_drag_update_pos = Vector((event.mouse_region_x, event.mouse_region_y))
+        #             self.dragging = True
+        #             return {'RUNNING_MODAL'}
+        #     elif event.value == 'RELEASE':
+        #         self.end_drag()
+        #         self.dragging = False
+        #         self._last_drag_update_pos = None
+        #         return {'RUNNING_MODAL'}
+        # elif event.type == 'MOUSEMOVE':
+        #     if self.dragging:
+        #         current_pos = Vector((event.mouse_region_x, event.mouse_region_y))
+        #         if (current_pos - self._last_drag_update_pos).length >= 5:
+        #             self.update_drag(context, event)
+        #             self._last_drag_update_pos = current_pos
         elif event.type in {'ESC'}:
             self.cancel(context)
             return {'CANCELLED'}
         return {'PASS_THROUGH'}
 
+    '''
     @time_it
     def start_drag(self, context, event):
         mouse_pos = Vector((event.mouse_region_x, event.mouse_region_y))
@@ -150,114 +133,55 @@ class SimpleClothOperator(bpy.types.Operator):
 
     def end_drag(self):
         end_drag_py(self.drag_data_ptr)
-
-    def ray_triangle_intersection(self, ray_origin, ray_direction, v0, v1, v2):
-        epsilon = 1e-6
-
-        edge1 = v1 - v0
-        edge2 = v2 - v0
-        h = np.cross(ray_direction, edge2)
-        a = np.dot(edge1, h)
-
-        if abs(a) < epsilon:
-            return None  # Ray is parallel to the triangle
-
-        f = 1.0 / a
-        s = ray_origin - v0
-        u = f * np.dot(s, h)
-
-        if u < 0.0 or u > 1.0:
-            return None
-
-        q = np.cross(s, edge1)
-        v = f * np.dot(ray_direction, q)
-
-        if v < 0.0 or u + v > 1.0:
-            return None
-
-        t = f * np.dot(edge2, q)
-
-        if t > epsilon:
-            return ray_origin + t * ray_direction
-
-        return None
+    '''
 
     def cancel(self, context):
-        free_perlin_py()  # Clean up Perlin noise
-        if hasattr(self, 'particles_ptr') and self.particles_ptr is not None:
-            free_particles_py(self.particles_ptr)
-            del self.particles_ptr
-        if hasattr(self, 'constraints_ptr') and self.constraints_ptr is not None:
-            free_constraints_py(self.constraints_ptr)
-            del self.constraints_ptr
-        if hasattr(self, 'drag_data_ptr') and self.drag_data_ptr is not None:
-            free_drag_data_py(self.drag_data_ptr)
-            del self.drag_data_ptr
+        # free_perlin_py()  # Clean up Perlin noise
+        # if hasattr(self, 'drag_data_ptr') and self.drag_data_ptr is not None:
+        #     free_drag_data_py(self.drag_data_ptr)
+        #     del self.drag_data_ptr
         wm = context.window_manager
         wm.event_timer_remove(self._timer)
         bpy.types.SpaceView3D.draw_handler_remove(self._handler, 'WINDOW')
         context.area.tag_redraw()
+        # Free simulation objects after each update
+        free_simulation_objects_py()
+        self.simulation_objects.clear()
+        # Clear batches.
+        self.point_batches.clear()
+        self.mesh_batches.clear()
 
-    @time_it
-    def initialize_simulation(self, context):
-        props = context.scene.simple_cloth
-        sim_ob = context.active_object
+    def prepare_objects(self, context):
+        USE_EVAL = False
 
-        # Get the evaluated mesh data
+        self.simulation_objects = []
         depsgraph = context.evaluated_depsgraph_get()
-        ob = sim_ob.evaluated_get(depsgraph)
-        eval_mesh = ob.data
+        for ob in context.scene.collection.children['SimuCloth-Cloths'].all_objects:
+            if ob.type != 'MESH':
+                continue
+            eval_ob = ob.evaluated_get(depsgraph) if USE_EVAL else ob
+            sim_obj = SimulationObject.from_object(eval_ob)
+            sim_obj.type = 1
+            self.simulation_objects.append(sim_obj)
+        
+        for obj in self.simulation_objects:
+            print(f"SimulationObject: type={obj.type}, tot_particles={obj.tot_particles}, tot_constraints={obj.tot_constraints}")
+            # Print a few particle positions for verification
+            # for i in range(min(5, obj.tot_particles)):
+            #     particle = obj.particles[i]
+            #     print(f"Particle {i}: pos=({particle.pos.x}, {particle.pos.y}, {particle.pos.z})")
+            # for i in range(min(5, obj.tot_constraints)):
+            #     constraint = obj.constraints[i]
+            #     print(f"Constraint {i}: v1={constraint.v1}, v2={constraint.v2}, rest_length={constraint.rest_length}")
 
-        # Get vertex positions with world matrix applied
-        verts = np.empty(shape=(len(eval_mesh.vertices) * 3), dtype=np.float64)
-        eval_mesh.attributes['position'].data.foreach_get('vector', verts)
-        verts = verts.reshape(-1, 3)
 
-        matrix_world = np.array(sim_ob.matrix_world)
-        rotation_scale = matrix_world[:3, :3]
-        translation = matrix_world[:3, 3]
+        # Pass the simulation objects to the Cython functions
+        create_simulation_objects_py(self.simulation_objects)
 
-        verts = np.dot(verts, rotation_scale.T)
-        verts += translation
-
-        # Initialize particles
-        pinned_group = sim_ob.vertex_groups.get('PINNED')
-        if pinned_group:
-            self.pinned_vertices = set(v.index for v in eval_mesh.vertices if pinned_group.index in [g.group for g in v.groups])
-        else:
-            self.pinned_vertices = set()
-
-        self.particles_ptr = create_particles_py(verts, self.pinned_vertices)
-        self.pcount = len(eval_mesh.vertices)
-
-        # Create distance constraints
-        constraints = []
-        for edge in eval_mesh.edges:
-            v1, v2 = edge.vertices
-            rest_length = np.linalg.norm(verts[v1] - verts[v2])
-            constraints.append((v1, v2, rest_length))
-
-        self.constraints_ptr = create_constraints_py(constraints)
-        self.ccount = len(constraints)
-
-        # Store mesh indices for triangle faces
-        # Create triangles
-        triangles = []
-        for poly in eval_mesh.polygons:
-            if len(poly.vertices) == 3:
-                triangles.append(tuple(poly.vertices))
-            elif len(poly.vertices) == 4:
-                # Split quad into two triangles
-                triangles.append((poly.vertices[0], poly.vertices[1], poly.vertices[2]))
-                triangles.append((poly.vertices[2], poly.vertices[3], poly.vertices[0]))
-
-        self.triangles_ptr = create_triangles_py(triangles)
-        self.tcount = len(triangles)
-        self.indices = triangles
-
-        # If the mesh is not triangulated, you might want to add a warning or triangulate it
-        if any(len(poly.vertices) > 4 for poly in eval_mesh.polygons):
-            self.report({'WARNING'}, "Mesh contains n-gons (polygons with more than 4 vertices). These will be skipped.")
+    # @time_it
+    def initialize_simulation(self, context: bpy.types.Context):
+        # Initialize simulation objects
+        self.prepare_objects(context)
 
     # @time_it
     def update_simulation(self, context):
@@ -265,7 +189,21 @@ class SimpleClothOperator(bpy.types.Operator):
         dt = props.dt
         self.simulation_time += dt  # Increment simulation time
 
-        wind_force = Vector((0, 0, 0))
+        update_positions_py(dt, props.damping, list(props.gravity))
+        solve_constraints_py(props.stiffness, props.iterations)
+        update_velocities_py(dt)
+        
+        # for i in range(len(self.simulation_objects)):
+        #     print(f"SimulationObject {i}: tot_particles={self.simulation_objects[i].tot_particles}, tot_constraints={self.simulation_objects[i].tot_constraints}")
+        #     for j in range(min(5, self.simulation_objects[i].tot_constraints)):
+        #         constraint = self.simulation_objects[i].constraints[j]
+        #         print(f"Constraint {j}: v1={constraint.v1}, v2={constraint.v2}, rest_length={constraint.rest_length}, distance={constraint.distance}")
+
+        # apply_drag_py(self.drag_data_ptr)
+
+        self.update_batches()
+
+        '''wind_force = Vector((0, 0, 0))
         if props.wind_object and props.wind_force > 0:
             wind_direction = get_local_axis_direction(props.wind_object, 'Y')
             wind_force = wind_direction * props.wind_force
@@ -273,28 +211,56 @@ class SimpleClothOperator(bpy.types.Operator):
         wind_force_np = np.array([wind_force.x, wind_force.y, wind_force.z], dtype=np.float64)
 
         apply_wind_force_py(
-            self.particles_ptr,
-            self.pcount,
             wind_force_np,
             props.wind_turbulence,
             self.simulation_time,
             dt
-        )
+        )'''
 
-        update_positions_py(self.particles_ptr, self.pcount, dt, props.damping)
-        solve_constraints_py(self.particles_ptr, self.constraints_ptr, self.pcount, self.ccount, props.stiffness, props.iterations)
-        update_velocities_py(self.particles_ptr, self.pcount, dt)
+        # Prepare collision object data
+        '''collision_object_data = []
+        depsgraph = context.evaluated_depsgraph_get()
+        for ob in context.scene.collection.children['SimuCloth-Colliders'].all_objects:
+            if ob.type != 'MESH':
+                continue
+            eval_ob = ob.evaluated_get(depsgraph)
+            mesh = eval_ob.data
+            min_bb, max_bb = get_min_max_bound_box(eval_ob)
+            collision_object_data.append({
+                'loop_tri_ptr': get_mesh_loop_triangles_ptr(mesh),
+                'corner_vert_ptr': get_mesh_corner_vert_ptr(mesh),
+                'tri_normals_ptr': get_mesh_polygon_normals_ptr(mesh),
+                'vert_positions_ptr': get_mesh_vert_positions_ptr(mesh),
+                'vert_normals_ptr': get_mesh_vert_normals_ptr(mesh),
+                'tot_tris': len(mesh.polygons),
+                'tot_verts': len(mesh.vertices),
+                'matrix_world': [v for row in eval_ob.matrix_world for v in row],
+                'min_point': list(min_bb),
+                'max_point': list(max_bb)
+            })
 
-        apply_drag_py(self.drag_data_ptr, self.particles_ptr, self.pcount)
+        # Handle collisions
+        handle_collisions_py(
+            props.friction
+        )'''
 
-        self.update_batches()
 
     # @time_it
     def update_batches(self):
-        positions = get_positions_py(self.particles_ptr, self.pcount)
-        vertices = [Vector(p) for p in positions]
-        
-        # Calculate normals
+        self.point_batches = []
+        for i in range(len(self.simulation_objects)):
+            try:
+                positions = get_positions_py(i)
+                if positions.size > 0:
+                    print(f"Info: GPUBatch created. Numpy size: {positions.size}. Numpy shape: {positions.shape}")
+                    # print(f"POSITIONS at time {self.simulation_time}: ", positions)
+                    self.point_batches.append(batch_for_shader(self.point_shader, 'POINTS', {"pos": positions}))
+                else:
+                    print(f"Warning: No positions returned for object {i}")
+            except Exception as e:
+                print(f"Error getting positions for object {i}: {str(e)}")
+
+        '''# Calculate normals
         normals = [Vector() for _ in vertices]
         for i1, i2, i3 in self.indices:
             v1, v2, v3 = vertices[i1], vertices[i2], vertices[i3]
@@ -305,23 +271,29 @@ class SimpleClothOperator(bpy.types.Operator):
         
         normals = [n.normalized() for n in normals]
 
-        # self.point_batch = batch_for_shader(self.point_shader, 'POINTS', {"pos": vertices})
-        self.mesh_batch = batch_for_shader(self.mesh_shader, 'TRIS', {
+        self.mesh_batches = batch_for_shader(self.mesh_shader, 'TRIS', {
             "position": vertices,
             "normal": normals
-        }, indices=self.indices)
+        }, indices=self.indices)'''
 
     # @time_it
     def draw_callback(self, context):
         # Draw points
-        # gpu.state.point_size_set(5)
-        # gpu.state.blend_set('ALPHA')
-        # gpu.state.depth_test_set('EQUAL')
-        # self.point_shader.bind()
-        # self.point_shader.uniform_float("color", (1, 1, 1, 1))
-        # self.point_batch.draw(self.point_shader)
+        gpu.state.point_size_set(5)
+        gpu.state.blend_set('ALPHA')
+        gpu.state.depth_test_set('LESS')  # 'EQUAL' (if draw mesh), 'LESS'
+        batch_count = len(self.point_batches)
+        for batch_index, batch in enumerate(self.point_batches):
+            color = (
+                1 - batch_index / batch_count,
+                batch_index / batch_count,
+                1,
+                1
+            )
+            self.point_shader.uniform_float("color", color)
+            batch.draw(self.point_shader)
 
-        # Draw mesh
+        '''# Draw mesh
         gpu.state.depth_test_set('LESS')
         gpu.state.depth_mask_set(True)
         # Remove face culling to render both sides
@@ -342,7 +314,7 @@ class SimpleClothOperator(bpy.types.Operator):
         self.mesh_shader.uniform_float("fresnelScale", 1.0)
         self.mesh_shader.uniform_float("fresnelPower", 2.0)
         
-        self.mesh_batch.draw(self.mesh_shader)
+        self.mesh_batches.draw(self.mesh_shader)'''
 
         gpu.state.depth_test_set('NONE')
         gpu.state.depth_mask_set(False)

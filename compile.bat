@@ -5,7 +5,7 @@ setlocal enabledelayedexpansion
 set PYTHON_PATH="C:\Users\JF\AppData\Local\Programs\Python\Python311\python.exe"
 
 :: Get the directory of the batch script
-d "%~dp0"
+cd "%~dp0"
 
 "%PYTHON_PATH%" -m pip install --upgrade cython
 "%PYTHON_PATH%" setup.py build_ext --inplace
