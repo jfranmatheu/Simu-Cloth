@@ -160,7 +160,7 @@ class SimulationObject(ctypes.Structure):
             pinned = pinned_group.index in {g.group for g in eval_mesh.vertices[i].groups}
             particle = Particle(pos=Vector3(*v), prev_pos=Vector3(*v), vel=Vector3(0, 0, 0), pinned=pinned)
             particles.append(particle)
-            print(f"Particle {i}: pos=({particle.pos.x}, {particle.pos.y}, {particle.pos.z}), pinned={pinned}")
+            # print(f"Particle {i}: pos=({particle.pos.x}, {particle.pos.y}, {particle.pos.z}), pinned={pinned}")
 
         # Create constraints
         constraints = []
@@ -169,7 +169,7 @@ class SimulationObject(ctypes.Structure):
             rest_length = np.linalg.norm(verts[v1] - verts[v2])
             constraint = Constraint(type=0, v1=v1, v2=v2, rest_length=rest_length, distance=rest_length)
             constraints.append(constraint)
-            print(f"Constraint {i}: v1={constraint.v1}, v2={constraint.v2}, rest_length={constraint.rest_length}")
+            # print(f"Constraint {i}: v1={constraint.v1}, v2={constraint.v2}, rest_length={constraint.rest_length}")
 
         # Create mesh
         if return_mesh_draw_data:

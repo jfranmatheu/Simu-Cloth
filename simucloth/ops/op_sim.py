@@ -267,7 +267,7 @@ class SimpleClothOperator(bpy.types.Operator):
                 if positions.size > 0:
                     if mesh_draw_data := self.mesh_draw_data.get(ob_id):
                         mesh_draw_data['vert_positions'] = positions
-                    print(f"Info: GPUBatch created. Numpy size: {positions.size}. Numpy shape: {positions.shape}")
+                    # print(f"Info: GPUBatch created. Numpy size: {positions.size}. Numpy shape: {positions.shape}")
                     # print(f"POSITIONS at time {self.simulation_time}: ", positions)
                     self.point_batches.append(batch_for_shader(self.point_shader, 'POINTS', {"pos": positions}))
                 else:
