@@ -8,7 +8,6 @@
 # cython: binding=False
 
 import logging
-import ctypes
 from math import isnan, isinf
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -22,19 +21,17 @@ cnp.import_array()
 DTYPE = np.float32
 ctypedef cnp.float32_t DTYPE_t
 
-cimport cython
-from libc.stdlib cimport malloc, free
 from libc.math cimport sqrt, fabs, copysign
 from cython.parallel import prange
-from libc.stdint cimport uintptr_t
 
 from .types cimport SimulationObject, Particle, Constraint, Mesh, ObjectType, Vector3
+from .sim_objects cimport get_simulation_objects, get_object_count
 
-cdef SimulationObject** simulation_objects
-cdef Py_ssize_t object_count
 
 cdef int update_positions(float dt, float damping, Vector3 gravity) nogil:
     cdef:
+        SimulationObject** simulation_objects = get_simulation_objects()
+        Py_ssize_t object_count = get_object_count()
         int i, j
         SimulationObject* sim_obj
         Particle* particle
@@ -70,14 +67,17 @@ def update_positions_py(float dt, float damping, list gravity):
     # print_particle_stats(simulation_objects[0], "After update_positions")
 
 cdef void solve_constraints(float stiffness, int iterations) nogil:
-    cdef int obj_index, i, j, k
-    cdef SimulationObject* sim_obj
-    cdef float dx, dy, dz, distance, difference, factor
-    cdef Vector3 correction
-    cdef float max_correction = 1.0  # Maximum allowed correction per iteration
-    cdef Particle* p1
-    cdef Particle* p2
-    cdef Constraint* constraint
+    cdef:
+        SimulationObject** simulation_objects = get_simulation_objects()
+        Py_ssize_t object_count = get_object_count()
+        int obj_index, i, j, k
+        SimulationObject* sim_obj
+        float dx, dy, dz, distance, difference, factor
+        Vector3 correction
+        float max_correction = 1.0  # Maximum allowed correction per iteration
+        Particle* p1
+        Particle* p2
+        Constraint* constraint
 
     for obj_index in range(object_count):
         sim_obj = simulation_objects[obj_index]
@@ -140,6 +140,8 @@ def solve_constraints_py(
 
 cdef int update_velocities(float dt) nogil:
     cdef:
+        SimulationObject** simulation_objects = get_simulation_objects()
+        Py_ssize_t object_count = get_object_count()
         int i, j
         SimulationObject* sim_obj
         Particle* particle
@@ -164,33 +166,6 @@ def update_velocities_py(float dt):
     # logger.info("Velocities updated")
     # print_particle_stats(simulation_objects[0], "After update_velocities")
 
-def create_simulation_objects_py(sim_objects):
-    logger.info(f"Creating simulation objects, count: {len(sim_objects)}")
-    global simulation_objects, object_count
-    object_count = len(sim_objects)
-    simulation_objects = <SimulationObject**>malloc(object_count * sizeof(SimulationObject*))
-    if simulation_objects == NULL:
-        logger.error("Failed to allocate memory for simulation objects")
-        raise MemoryError("Failed to allocate memory for simulation objects")
-    for i, sim_ob in enumerate(sim_objects):
-        simulation_objects[i] = <SimulationObject*><uintptr_t>ctypes.addressof(sim_ob)
-        logger.info(f"Object {i} created with {simulation_objects[i].tot_particles} particles")
-    logger.info("Simulation objects created")
-
-def update_simulation_object_py(index: int, sim_ob):
-    logger.info(f"Updating specific simulation object")
-    simulation_objects[index] = <SimulationObject*><uintptr_t>ctypes.addressof(sim_ob)
-    logger.info("Simulation object updated")
-
-def free_simulation_objects_py():
-    logger.info("Freeing simulation objects")
-    global simulation_objects, object_count
-    if simulation_objects != NULL:
-        free(simulation_objects)
-        simulation_objects = NULL
-        object_count = 0
-    logger.info("Simulation objects freed")
-
 
 cdef int _get_positions_parallel(SimulationObject* sim_obj, DTYPE_t[:, ::1] positions) nogil:
     cdef int i
@@ -204,6 +179,8 @@ cdef int _get_positions_parallel(SimulationObject* sim_obj, DTYPE_t[:, ::1] posi
 def get_positions_py(int object_index):
     # logger.info(f"Getting positions for object index: {object_index}")
     cdef:
+        SimulationObject** simulation_objects = get_simulation_objects()
+        Py_ssize_t object_count = get_object_count()
         SimulationObject* sim_obj
         cnp.ndarray[DTYPE_t, ndim=2] positions
         int i

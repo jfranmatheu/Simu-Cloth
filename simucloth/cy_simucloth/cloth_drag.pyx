@@ -15,6 +15,7 @@ from libc.math cimport sqrt
 
 from .types cimport Particle, Triangle, DragData
 from .geom_utils cimport ray_triangle_intersection
+from .sim_objects cimport get_simulation_objects, get_object_count
 
 cnp.import_array()
 

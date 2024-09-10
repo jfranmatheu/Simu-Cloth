@@ -11,7 +11,17 @@
 # You should have received a copy of the GNU General Public License
 # along with this program. If not, see <http://www.gnu.org/licenses/>.
 
+import os
+import sys
+
+# Add the parent directory of 'simucloth' to sys.path
+parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if parent_dir not in sys.path:
+    sys.path.append(parent_dir)
+
+
 from . import auto_load
+from . import cy_simucloth
 
 auto_load.init()
 

@@ -22,6 +22,7 @@ from ..utils.object import (
     get_matrix_world_ptr,
     get_min_max_bound_box
 )
+from ..cy_types import SimulationObject
 
 
 # Add the directory containing the simucloth folder to Python's path
@@ -30,16 +31,17 @@ from ..utils.object import (
 #     sys.path.append(addon_dir)
 
 try:
-    from ..cy_simucloth.cloth_simulation import (
+    from ..cy_simucloth.sim_objects import (
         create_simulation_objects_py,
         update_simulation_object_py,
         free_simulation_objects_py,
+    )
+    from ..cy_simucloth.cloth_simulation import (
         get_positions_py,
         update_positions_py,
         solve_constraints_py,
         update_velocities_py,
     )
-    from ..cy_types import SimulationObject
     print("cloth_simulation imported successfully")
 except ImportError as e:
     print("Failed to import cloth_simulation:", str(e))
