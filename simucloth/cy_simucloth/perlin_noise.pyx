@@ -35,16 +35,16 @@ cdef void init_perlin() nogil:
         perlin[i] = <int>(rand() % 256)
 
 # Perlin noise function
-cdef double noise(double x, double y, double z) nogil:
+cdef float noise(float x, float y, float z) nogil:
     cdef int X = <int>floor(x) & 255
     cdef int Y = <int>floor(y) & 255
     cdef int Z = <int>floor(z) & 255
     x -= floor(x)
     y -= floor(y)
     z -= floor(z)
-    cdef double u = fade(x)
-    cdef double v = fade(y)
-    cdef double w = fade(z)
+    cdef float u = fade(x)
+    cdef float v = fade(y)
+    cdef float w = fade(z)
     cdef int A = perlin[X] + Y
     cdef int AA = perlin[A & 255] + Z
     cdef int AB = perlin[(A + 1) & 255] + Z
@@ -60,23 +60,23 @@ cdef double noise(double x, double y, double z) nogil:
                            lerp(u, grad(perlin[(AB + 1) & 255], x, y - 1, z - 1),
                                    grad(perlin[(BB + 1) & 255], x - 1, y - 1, z - 1))))
 
-cdef double fade(double t) nogil:
+cdef float fade(float t) nogil:
     return t * t * t * (t * (t * 6 - 15) + 10)
 
-cdef double lerp(double t, double a, double b) nogil:
+cdef float lerp(float t, float a, float b) nogil:
     return a + t * (b - a)
 
-cdef double grad(int hash, double x, double y, double z) nogil:
+cdef float grad(int hash, float x, float y, float z) nogil:
     cdef int h = hash & 15
-    cdef double u = x if h < 8 else y
-    cdef double v = y if h < 4 else (x if h == 12 or h == 14 else z)
+    cdef float u = x if h < 8 else y
+    cdef float v = y if h < 4 else (x if h == 12 or h == 14 else z)
     return (u if (h & 1) == 0 else -u) + (v if (h & 2) == 0 else -v)
 
 # Don't forget to update these Python wrapper functions
-def init_perlin_py():
+cpdef void init_perlin_py():
     init_perlin()
 
-def free_perlin_py():
+cpdef void free_perlin_py():
     global perlin
     if perlin != NULL:
         free(perlin)

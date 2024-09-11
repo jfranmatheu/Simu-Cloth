@@ -32,9 +32,9 @@ cdef int update_positions(float dt, float damping, Vector3 gravity) nogil:
     cdef:
         SimulationObject** simulation_objects = get_simulation_objects()
         Py_ssize_t object_count = get_object_count()
-        int i, j
         SimulationObject* sim_obj
         Particle* particle
+        int i, j
 
     for i in range(object_count):
         sim_obj = simulation_objects[i]

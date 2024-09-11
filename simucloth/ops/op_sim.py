@@ -37,6 +37,13 @@ try:
         update_simulation_object_py,
         free_simulation_objects_py,
     )
+    from ..cy_simucloth.wind import (
+        apply_wind_force_py,
+    )
+    from ..cy_simucloth.perlin_noise import (
+        init_perlin_py,
+        free_perlin_py,
+    )
     from ..cy_simucloth.cloth_simulation import (
         get_positions_py,
         update_positions_py,
@@ -68,13 +75,13 @@ class SimpleClothOperator(bpy.types.Operator):
         self.simulation_time = 0.0
 
     def __del__(self):
-        # if hasattr(self, 'drag_data_ptr') and self.drag_data_ptr is not None:
-        #     free_drag_data_py(self.drag_data_ptr)
+        #if hasattr(self, 'drag_data_ptr') and self.drag_data_ptr is not None:
+        #    free_drag_data_py(self.drag_data_ptr)
         pass
 
     def execute(self, context):
         # self.drag_data_ptr = create_drag_data_py(self._drag_influence_radius)
-        # init_perlin_py()  # Initialize Perlin noise
+        init_perlin_py()  # Initialize Perlin noise
         self.initialize_simulation(context)
         wm = context.window_manager
         self._timer = wm.event_timer_add(context.scene.simple_cloth.dt, window=context.window)
@@ -139,7 +146,7 @@ class SimpleClothOperator(bpy.types.Operator):
     '''
 
     def cancel(self, context):
-        # free_perlin_py()  # Clean up Perlin noise
+        free_perlin_py()  # Clean up Perlin noise
         # if hasattr(self, 'drag_data_ptr') and self.drag_data_ptr is not None:
         #     free_drag_data_py(self.drag_data_ptr)
         #     del self.drag_data_ptr
@@ -214,19 +221,19 @@ class SimpleClothOperator(bpy.types.Operator):
 
         self.update_batches()
 
-        '''wind_force = Vector((0, 0, 0))
+        wind_force = Vector((0, 0, 0))
         if props.wind_object and props.wind_force > 0:
             wind_direction = get_local_axis_direction(props.wind_object, 'Y')
             wind_force = wind_direction * props.wind_force
 
-        wind_force_np = np.array([wind_force.x, wind_force.y, wind_force.z], dtype=np.float64)
+        wind_force_np = np.array([wind_force.x, wind_force.y, wind_force.z], dtype=np.float32)
 
         apply_wind_force_py(
             wind_force_np,
             props.wind_turbulence,
             self.simulation_time,
             dt
-        )'''
+        )
 
         # Prepare collision object data
         '''collision_object_data = []

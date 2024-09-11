@@ -1,12 +1,12 @@
 cdef void init_perlin() nogil
 
-cdef double noise(double x, double y, double z) nogil
+cdef float noise(float x, float y, float z) nogil
 
-cdef double fade(double t) nogil
+cdef float fade(float t) nogil
 
-cdef double lerp(double t, double a, double b) nogil
+cdef float lerp(float t, float a, float b) nogil
 
-cdef double grad(int hash, double x, double y, double z) nogil
+cdef float grad(int hash, float x, float y, float z) nogil
 
 cpdef void init_perlin_py()
 

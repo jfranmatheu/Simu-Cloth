@@ -20,6 +20,17 @@ ext_modules = [
         **shared_ext_kwargs
     ),
     Extension(
+        "simucloth.cy_simucloth.perlin_noise",
+        ["simucloth/cy_simucloth/perlin_noise.pyx"],
+        **shared_ext_kwargs
+    ),
+    Extension(
+        "simucloth.cy_simucloth.wind",
+        ["simucloth/cy_simucloth/wind.pyx"],
+        **np_ext_kwargs,
+        **shared_ext_kwargs
+    ),
+    Extension(
         "simucloth.cy_simucloth.cloth_simulation",
         ["simucloth/cy_simucloth/cloth_simulation.pyx"],
         **np_ext_kwargs,
