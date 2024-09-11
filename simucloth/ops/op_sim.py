@@ -8,6 +8,7 @@ import gpu
 from gpu_extras.batch import batch_for_shader
 from mathutils import Vector
 from bpy_extras import view3d_utils
+from mathutils import Matrix
 
 from ..shaders import mesh_vertex_shader, mesh_fragment_shader
 from ..utils.time_it import time_it
@@ -269,7 +270,10 @@ class SimpleClothOperator(bpy.types.Operator):
                         mesh_draw_data['vert_positions'] = positions
                     # print(f"Info: GPUBatch created. Numpy size: {positions.size}. Numpy shape: {positions.shape}")
                     # print(f"POSITIONS at time {self.simulation_time}: ", positions)
-                    self.point_batches.append(batch_for_shader(self.point_shader, 'POINTS', {"pos": positions}))
+                    self.point_batches.append((
+                        batch_for_shader(self.point_shader, 'POINTS', {"pos": positions}),
+                        self.simulation_objects[ob_id]
+                    ))
                 else:
                     print(f"Warning: No positions returned for object {ob_id}")
             except Exception as e:
@@ -293,7 +297,10 @@ class SimpleClothOperator(bpy.types.Operator):
                     "position": mesh_draw_data['vert_positions'],
                     "normal": mesh_draw_data['vert_normals']
                 }, indices=mesh_draw_data['tri_indices'])
-                self.mesh_batches.append(batch)
+                self.mesh_batches.append((
+                    batch,
+                    self.simulation_objects[ob_id]
+                ))
 
     # @time_it
     def draw_callback(self, context):
@@ -302,7 +309,7 @@ class SimpleClothOperator(bpy.types.Operator):
         gpu.state.blend_set('ALPHA')
         gpu.state.depth_test_set('LESS')  # 'EQUAL' (if draw mesh), 'LESS'
         batch_count = len(self.point_batches)
-        for batch_index, batch in enumerate(self.point_batches):
+        for batch_index, (batch, sim_obj) in enumerate(self.point_batches):
             color = (
                 1 - batch_index / batch_count,
                 batch_index / batch_count,
@@ -310,7 +317,10 @@ class SimpleClothOperator(bpy.types.Operator):
                 1
             )
             self.point_shader.uniform_float("color", color)
-            batch.draw(self.point_shader)
+            with gpu.matrix.push_pop():
+                model_view_mat = gpu.matrix.get_model_view_matrix()
+                gpu.matrix.load_matrix(model_view_mat @ Matrix(sim_obj.matrix_world))
+                batch.draw(self.point_shader)
 
         # Draw mesh
         gpu.state.depth_test_set('LESS')
@@ -322,7 +332,6 @@ class SimpleClothOperator(bpy.types.Operator):
         projection_matrix = context.region_data.window_matrix
         view_position = context.region_data.view_matrix.inverted().translation
 
-        self.mesh_shader.uniform_float("modelViewMatrix", model_view_matrix)
         self.mesh_shader.uniform_float("projectionMatrix", projection_matrix)
         self.mesh_shader.uniform_float("lightDirection", (1, 1, 1))
         self.mesh_shader.uniform_float("viewPosition", view_position)
@@ -332,14 +341,15 @@ class SimpleClothOperator(bpy.types.Operator):
         self.mesh_shader.uniform_float("fresnelPower", 2.0)
 
         batch_count = len(self.mesh_batches)
-        for batch_index, batch in enumerate(self.mesh_batches):
+        for batch_index, (batch, sim_obj) in enumerate(self.mesh_batches):
             color = (
                 1 - batch_index / batch_count,
                 batch_index / batch_count,
                 1,
                 1
             )
-            self.mesh_shader.uniform_float("color", color)  # Adjust color as needed
+            self.mesh_shader.uniform_float("color", color)
+            self.mesh_shader.uniform_float("modelViewMatrix", model_view_matrix @ Matrix(sim_obj.matrix_world))
             batch.draw(self.mesh_shader)
 
         gpu.state.depth_test_set('NONE')
