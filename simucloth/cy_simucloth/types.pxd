@@ -54,6 +54,7 @@ cdef struct Mesh:
     int tot_verts
 
 cdef struct SimulationObject:
+    char[32] id
     ObjectType type
     Mesh mesh
     Particle* particles

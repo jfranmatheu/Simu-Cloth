@@ -1643,10 +1643,11 @@ struct __pyx_t_9simucloth_12cy_simucloth_5types_Mesh {
  *     int tot_verts
  * 
  * cdef struct SimulationObject:             # <<<<<<<<<<<<<<
+ *     char[32] id
  *     ObjectType type
- *     Mesh mesh
  */
 struct __pyx_t_9simucloth_12cy_simucloth_5types_SimulationObject {
+  char id[32];
   __pyx_t_9simucloth_12cy_simucloth_5types_ObjectType type;
   struct __pyx_t_9simucloth_12cy_simucloth_5types_Mesh mesh;
   struct __pyx_t_9simucloth_12cy_simucloth_5types_Particle *particles;

@@ -96,7 +96,7 @@ class Mesh(ctypes.Structure):
 
 
 class SimulationObject(ctypes.Structure):
-    _fields_ = [# ("id", ctypes.c_wchar * 32),
+    _fields_ = [("id", ctypes.c_char * 32),
                 ("type", ctypes.c_int),
                 ("mesh", Mesh),
                 ("particles", ctypes.POINTER(Particle)),
@@ -124,7 +124,7 @@ class SimulationObject(ctypes.Structure):
                     bbox_min: Tuple[float, float, float],
                     bbox_max: Tuple[float, float, float]) -> 'SimulationObject':
         obj = cls()
-        # obj.id = id[:32].encode('utf-16')  # Truncate to 32 characters and encode as UTF-16
+        obj.id = id.encode('ascii')[:32].ljust(32, b'\0')
         obj.type = ctypes.c_int(type.value)
         obj.mesh = mesh
         obj.tot_particles = ctypes.c_int(len(particles))
@@ -197,7 +197,7 @@ class SimulationObject(ctypes.Structure):
             bbox_min=tuple(eval_obj.bound_box[0]),
             bbox_max=tuple(eval_obj.bound_box[6])
         )
-        
+
         if return_mesh_draw_data:
             return sim_obj, mesh_draw_data
 
