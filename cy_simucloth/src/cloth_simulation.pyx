@@ -167,13 +167,13 @@ def update_velocities_py(float dt):
     # print_particle_stats(simulation_objects[0], "After update_velocities")
 
 
-cdef int _get_positions_parallel(SimulationObject* sim_obj, DTYPE_t[:, ::1] positions) nogil:
+cdef int _get_positions_parallel(Particle* particles, int pcount, DTYPE_t[:, ::1] positions) nogil:
     cdef int i
-    for i in prange(sim_obj.tot_particles, nogil=True):
-        positions[i, 0] = sim_obj.particles[i].pos.x
-        positions[i, 1] = sim_obj.particles[i].pos.y
-        positions[i, 2] = sim_obj.particles[i].pos.z
-    
+    for i in prange(pcount, nogil=True):
+        positions[i, 0] = particles[i].pos.x
+        positions[i, 1] = particles[i].pos.y
+        positions[i, 2] = particles[i].pos.z
+
     return 0
 
 def get_positions_py(int object_index):
@@ -207,7 +207,7 @@ def get_positions_py(int object_index):
         return np.empty((0, 3), dtype=DTYPE)
 
     if sim_obj.tot_particles > 1000:
-        _get_positions_parallel(sim_obj, positions)
+        _get_positions_parallel(sim_obj.particles, sim_obj.tot_particles, positions)
     else:
         for i in range(sim_obj.tot_particles):
             if &sim_obj.particles[i] == NULL:
